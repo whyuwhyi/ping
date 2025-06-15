@@ -39,15 +39,7 @@ usage: ping [ -v ] <hostname>
 - `-v`: 详细模式，显示更多的调试信息
 - `hostname`: 目标主机名或IP地址
 
-## 代码结构
-
-- `ping.c`: 主程序文件，包含核心ping功能实现
-- `ping.h`: 头文件，包含必要的系统头文件和结构定义
-- `Makefile`: 编译配置文件
-
-## 24种功能扩展方案
-
-### 基本功能扩展
+## 功能扩展方案
 
 1. **-b 广播ping支持**
    - 允许ping一个广播地址
@@ -83,8 +75,6 @@ usage: ping [ -v ] <hostname>
    - 设置IP包的TTL值
    - 仅适用于IPv4
    - 用于路径跟踪和网络诊断
-
-### 传统Unix ping功能扩展
 
 8. **-W timeout 超时设置**
    - 设置等待每个回复的超时时间（毫秒）
@@ -131,8 +121,6 @@ usage: ping [ -v ] <hostname>
     - 显示更详细的调试信息
     - 网络问题诊断
 
-### IPv6和协议相关功能
-
 17. **-4 强制IPv4模式**
     - 强制使用IPv4协议
     - 即使主机有IPv6地址也使用IPv4
@@ -153,8 +141,6 @@ usage: ping [ -v ] <hostname>
     - 支持do/dont/want选项
     - 网络MTU测试
 
-### 接口和地址功能
-
 21. **-I interface 指定网络接口**
     - 从指定的网络接口发送包
     - 支持接口名称（如eth0）或IP地址
@@ -164,4 +150,3 @@ usage: ping [ -v ] <hostname>
     - 设置IP时间戳选项
     - 支持tsonly/tsandaddr/tsprespec
     - 精确的网络延迟测量
-
