@@ -138,7 +138,7 @@ usage: ping [ -v ] <hostname>
 
 20. **-M pmtudisc 路径MTU发现**
     - 设置路径MTU发现策略
-    - 支持do/dont/want选项
+    - 支持do/dont/want/probe选项
     - 网络MTU测试
 
 21. **-I interface 指定网络接口**
