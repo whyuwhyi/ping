@@ -13,47 +13,121 @@ int main(int argc, char **argv) {
   struct addrinfo *ai;
 
   opterr = 0; /* don't want getopt() writing to stderr */
-  while ((c = getopt(argc, argv, "v46dm:M:I:T:")) != -1) {
+  /* Set defaults for ping1 options */
+  count = 0;
+  interval = 1.0;
+  quiet = 0;
+  ttl = 0;
+  timeout = 1.0;
+  broadcast = 0;
+
+  /* Set defaults for new options */
+  rtt_precision = 0;
+  print_timestamps = 0;
+  sndbuf_size = 0;
+
+  while ((c = getopt(argc, argv, "bc:hi:qs:t:vW:46dm:M:I:T:fnp:rRl:w:V3DS:")) != -1) {
     switch (c) {
+    /* ping1 options */
+    case 'b':
+      broadcast = 1;
+      break;
+    case 'c':
+      count = atoi(optarg);
+      break;
+    case 'h':
+      usage();
+      exit(0);
+    case 'i':
+      interval = atof(optarg);
+      if (interval <= 0) err_quit("interval must be > 0");
+      break;
+    case 'q':
+      quiet = 1;
+      break;
+    case 's':
+      datalen = atoi(optarg);
+      if (datalen < 0) err_quit("invalid packet size");
+      break;
+    case 't':
+      ttl = atoi(optarg);
+      if (ttl < 1 || ttl > 255) err_quit("ttl must be 1-255");
+      break;
     case 'v':
       verbose++;
       break;
-    
+    case 'W':
+      timeout = atof(optarg);
+      if (timeout <= 0) err_quit("timeout must be >= 0");
+      break;
+      
+    /* ping2 extensions */
     case '4':
       force_ipv4 = 1;
       break;
-      
     case '6':
       force_ipv6 = 1;
       break;
-      
     case 'd':
       debug_mode = 1;
       break;
-      
     case 'm':
       mark_value = atoi(optarg);
       break;
-      
     case 'M':
       pmtu_discovery = optarg;
       break;
-      
     case 'I':
       interface = optarg;
       break;
-      
     case 'T':
       timestamp_opt = optarg;
       break;
+    case 'f':
+      flood_mode = 1;
+      break;
+    case 'n':
+      numeric_mode = 1;
+      break;
+    case 'p':
+      pattern = optarg;
+      break;
+    case 'r':
+      bypass_route = 1;
+      break;
+    case 'R':
+      record_route = 1;
+      break;
+    case 'l':
+      preload_count = atoi(optarg);
+      break;
+    case 'w':
+      deadline = atoi(optarg);
+      break;
+
+    /* new options */
+    case 'V':
+      print_version();
+      exit(0);
+    case '3':
+      rtt_precision = 1;
+      break;
+    case 'D':
+      print_timestamps = 1;
+      break;
+    case 'S':
+      sndbuf_size = atoi(optarg);
+      if (sndbuf_size <= 0) err_quit("send buffer size must be > 0");
+      break;
 
     case '?':
-      err_quit("unrecognized option: %c", c);
+      usage();
+      exit(1);
     }
   }
 
-  if (optind != argc - 1)
-    err_quit("usage: ping [ -v46d ] [ -m mark ] [ -M pmtudisc ] [ -I interface ] [ -T tstamp ] <hostname>");
+  if (optind != argc-1)
+    err_quit("usage: ping [ options ] <hostname>");
   host = argv[optind];
 
   /* validate conflicting options */
@@ -75,6 +149,31 @@ int main(int argc, char **argv) {
       strcmp(timestamp_opt, "tsprespec") != 0)
     err_quit("invalid timestamp option: %s (use tsonly/tsandaddr/tsprespec)", timestamp_opt);
 
+  /* additional ping2 validations */
+  if (flood_mode && getuid() != 0)
+    err_quit("flood mode requires root privileges");
+
+  if (preload_count > 0 && getuid() != 0)
+    err_quit("preload mode requires root privileges");
+
+  if (pattern) {
+    int len = strlen(pattern);
+    if (len % 2 != 0)
+      err_quit("pattern must be an even number of hex digits");
+    for (int i = 0; i < len; i++) {
+      if (!((pattern[i] >= '0' && pattern[i] <= '9') ||
+            (pattern[i] >= 'a' && pattern[i] <= 'f') ||
+            (pattern[i] >= 'A' && pattern[i] <= 'F')))
+        err_quit("pattern must contain only hex digits");
+    }
+  }
+
+  if (preload_count < 0)
+    err_quit("preload count must be non-negative");
+
+  if (deadline < 0)
+    err_quit("deadline must be non-negative");
+
   pid = getpid();
   signal(SIGALRM, sig_alrm);
 
@@ -85,6 +184,12 @@ int main(int argc, char **argv) {
   else if (force_ipv6)
     family = AF_INET6;
     
+  /* set deadline alarm if specified */
+  if (deadline > 0) {
+    signal(SIGALRM, sig_alrm);
+    alarm(deadline);
+  }
+
   ai = host_serv(host, NULL, family, 0);
 
   printf("ping %s (%s): %d data bytes\n", ai->ai_canonname,
@@ -92,6 +197,10 @@ int main(int argc, char **argv) {
 
   /* 4initialize according to protocol */
   if (ai->ai_family == AF_INET) {
+    struct sockaddr_in *sin = (struct sockaddr_in *)ai->ai_addr;
+    if (is_broadcast_ip(sin) && !broadcast) {
+      err_quit("ping: Do you want to ping broadcast? Then -b. If not, check your local firewall rules");
+    }
     pr = &proto_v4;
 #ifdef IPV6
   } else if (ai->ai_family == AF_INET6) {
@@ -118,6 +227,7 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
   struct ip *ip;
   struct icmp *icmp;
   struct timeval *tvsend;
+  char addr_str[INET_ADDRSTRLEN];
 
   ip = (struct ip *)ptr;  /* start of IP header */
   hlen1 = ip->ip_hl << 2; /* length of IP header */
@@ -127,8 +237,10 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     err_quit("icmplen (%d) < 8", icmplen);
 
   if (icmp->icmp_type == ICMP_ECHOREPLY) {
-    if (icmp->icmp_id != pid)
+    if (icmp->icmp_id != pid) {
+      nrecv = 1;  /* signing drop packet */
       return; /* not a response to our ECHO_REQUEST */
+    }
     if (icmplen < 16)
       err_quit("icmplen (%d) < 16", icmplen);
 
@@ -136,14 +248,109 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
-    printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
-           Sock_ntop_host(pr->sarecv, pr->salen), icmp->icmp_seq, ip->ip_ttl,
-           rtt);
+    /* timeout detection */
+    if (rtt > timeout*1000.0) {
+      preceived++;
+      if (!quiet) printf("Exceed timeLimit\n");
+    } else {
+      /* print timestamp if requested */
+      if (print_timestamps && !quiet) {
+        print_timestamp();
+      }
+
+      /* handle numeric mode */
+      if (numeric_mode) {
+        inet_ntop(AF_INET, &ip->ip_src, addr_str, INET_ADDRSTRLEN);
+        if (!quiet) {
+          if (rtt_precision) {
+            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
+                   addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+          } else {
+            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
+                   addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+          }
+        }
+      } else {
+        /* try to resolve hostname from IP */
+        struct hostent *hent;
+        struct in_addr addr;
+        addr.s_addr = ip->ip_src.s_addr;
+        hent = gethostbyaddr(&addr, sizeof(addr), AF_INET);
+        if (hent != NULL) {
+          if (!quiet) {
+            if (rtt_precision) {
+              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
+                     hent->h_name, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+            } else {
+              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
+                     hent->h_name, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+            }
+          }
+        } else {
+          if (!quiet) {
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
+                     inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
+                     inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+            }
+          }
+        }
+      }
+
+      /* display route record if enabled */
+      if (record_route) {
+        unsigned char *cp = (unsigned char *)ip + sizeof(struct ip);
+        unsigned char *end = (unsigned char *)ip + (ip->ip_hl << 2);
+
+        while (cp < end) {
+          if (*cp == IPOPT_RR && cp + 1 < end) {
+            int opt_len = *(cp + 1);
+            if (opt_len >= 3 && cp + opt_len <= end) {
+              int ptr = *(cp + 2);
+              if (ptr > 3) { /* Only show if there are recorded addresses */
+                printf("RR:");
+
+                for (int i = 3; i < ptr - 1 && i + 3 < opt_len; i += 4) {
+                  if (cp + i + 3 < end) {
+                    struct in_addr addr;
+                    memcpy(&addr, cp + i, 4);
+                    if (addr.s_addr != 0) {
+                      printf(" %s", inet_ntoa(addr));
+                    }
+                  }
+                }
+                printf("\n");
+              }
+            }
+            break;
+          }
+          if (*cp == IPOPT_EOL) break;
+          if (*cp == IPOPT_NOP) {
+            cp++;
+            continue;
+          }
+          if (cp + 1 >= end) break;
+          int next_len = *(cp + 1);
+          if (next_len < 2) break;
+          cp += next_len;
+        }
+      }
+    }
 
   } else if (verbose) {
-    printf("  %d bytes from %s: type = %d, code = %d\n", icmplen,
-           Sock_ntop_host(pr->sarecv, pr->salen), icmp->icmp_type,
-           icmp->icmp_code);
+    if (numeric_mode) {
+      inet_ntop(AF_INET, &ip->ip_src, addr_str, INET_ADDRSTRLEN);
+      printf("  %d bytes from %s: type = %d, code = %d\n", icmplen, addr_str,
+             icmp->icmp_type, icmp->icmp_code);
+    } else {
+      printf("  %d bytes from %s: type = %d, code = %d\n", icmplen,
+             Sock_ntop_host(pr->sarecv, pr->salen), icmp->icmp_type,
+             icmp->icmp_code);
+    }
+  } else {
+    nrecv = 1;  /* signing drop packet */
   }
 }
 
@@ -154,6 +361,7 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
   struct ip6_hdr *ip6;
   struct icmp6_hdr *icmp6;
   struct timeval *tvsend;
+  char addr_str[INET6_ADDRSTRLEN];
 
   /*
   ip6 = (struct ip6_hdr *) ptr;		// start of IPv6 header
@@ -171,8 +379,10 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     err_quit("icmp6len (%d) < 8", icmp6len);
 
   if (icmp6->icmp6_type == ICMP6_ECHO_REPLY) {
-    if (icmp6->icmp6_id != pid)
+    if (icmp6->icmp6_id != pid) {
+      nrecv = 1;  /* signing drop packet */
       return; /* not a response to our ECHO_REQUEST */
+    }
     if (icmp6len < 16)
       err_quit("icmp6len (%d) < 16", icmp6len);
 
@@ -180,14 +390,72 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
-    printf("%d bytes from %s: seq=%u, hlim=%d, rtt=%.3f ms\n", icmp6len,
-           Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
-           ip6->ip6_hlim, rtt);
+    /* timeout detection */
+    if (rtt > timeout*1000.0) {
+      preceived++;
+      if (!quiet) printf("Exceed TimeLimit\n");
+    } else {
+      /* print timestamp if requested */
+      if (print_timestamps && !quiet) {
+        print_timestamp();
+      }
+
+      /* handle numeric mode */
+      if (numeric_mode) {
+        inet_ntop(AF_INET6, &((struct sockaddr_in6 *)pr->sarecv)->sin6_addr,
+                  addr_str, INET6_ADDRSTRLEN);
+        if (!quiet) {
+          if (rtt_precision) {
+            printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len, addr_str,
+                   icmp6->icmp6_seq, rtt);
+          } else {
+            printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len, addr_str,
+                   icmp6->icmp6_seq, rtt);
+          }
+        }
+      } else {
+        /* try to resolve hostname from IPv6 address */
+        struct hostent *hent;
+        struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)pr->sarecv;
+        hent = gethostbyaddr(&sa6->sin6_addr, sizeof(sa6->sin6_addr), AF_INET6);
+        if (hent != NULL) {
+          inet_ntop(AF_INET6, &sa6->sin6_addr, addr_str, INET6_ADDRSTRLEN);
+          if (!quiet) {
+            if (rtt_precision) {
+              printf("%d bytes from %s (%s): seq=%u, rtt=%.6f ms\n", icmp6len,
+                     hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+            } else {
+              printf("%d bytes from %s (%s): seq=%u, rtt=%.3f ms\n", icmp6len,
+                     hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+            }
+          }
+        } else {
+          if (!quiet) {
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
+                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
+                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq, rtt);
+            }
+          }
+        }
+      }
+    }
 
   } else if (verbose) {
-    printf("  %d bytes from %s: type = %d, code = %d\n", icmp6len,
-           Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_type,
-           icmp6->icmp6_code);
+    if (numeric_mode) {
+      inet_ntop(AF_INET6, &((struct sockaddr_in6 *)pr->sarecv)->sin6_addr,
+                addr_str, INET6_ADDRSTRLEN);
+      printf("  %d bytes from %s: type = %d, code = %d\n", icmp6len, addr_str,
+             icmp6->icmp6_type, icmp6->icmp6_code);
+    } else {
+      printf("  %d bytes from %s: type = %d, code = %d\n", icmp6len,
+             Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_type,
+             icmp6->icmp6_code);
+    }
+  } else {
+    nrecv = 1;  /* signing drop packet */
   }
 #endif /* IPV6 */
 }
@@ -232,6 +500,23 @@ void send_v4(void) {
   icmp->icmp_seq = nsent++;
   gettimeofday((struct timeval *)icmp->icmp_data, NULL);
 
+  /* fill data with pattern if specified */
+  if (pattern) {
+    unsigned char *data = (unsigned char *)icmp->icmp_data + 8;
+    int pattern_len = strlen(pattern) / 2;
+    unsigned char pattern_bytes[pattern_len];
+
+    /* convert hex string to bytes */
+    for (int i = 0; i < pattern_len; i++) {
+      sscanf(pattern + i * 2, "%2hhx", &pattern_bytes[i]);
+    }
+
+    /* fill data area with pattern */
+    for (int i = 8; i < datalen; i++) {
+      data[i - 8] = pattern_bytes[(i - 8) % pattern_len];
+    }
+  }
+
   len = 8 + datalen; /* checksum ICMP header and data */
   icmp->icmp_cksum = 0;
   icmp->icmp_cksum = in_cksum((unsigned short *)icmp, len);
@@ -251,6 +536,23 @@ void send_v6() {
   icmp6->icmp6_seq = nsent++;
   gettimeofday((struct timeval *)(icmp6 + 1), NULL);
 
+  /* fill data with pattern if specified */
+  if (pattern) {
+    unsigned char *data = (unsigned char *)(icmp6 + 1) + 8;
+    int pattern_len = strlen(pattern) / 2;
+    unsigned char pattern_bytes[pattern_len];
+
+    /* convert hex string to bytes */
+    for (int i = 0; i < pattern_len; i++) {
+      sscanf(pattern + i * 2, "%2hhx", &pattern_bytes[i]);
+    }
+
+    /* fill data area with pattern */
+    for (int i = 8; i < datalen; i++) {
+      data[i - 8] = pattern_bytes[(i - 8) % pattern_len];
+    }
+  }
+
   len = 8 + datalen; /* 8-byte ICMPv6 header */
 
   sendto(sockfd, sendbuf, len, 0, pr->sasend, pr->salen);
@@ -259,17 +561,42 @@ void send_v6() {
 }
 
 void readloop(void) {
-  int size;
+  int size, tio_sign;
   char recvbuf[BUFSIZE];
+  double p_inval;
   socklen_t len;
   ssize_t n;
   struct timeval tval;
+  int nreceived = 0;
+  int nsent_local = 0;
+  int p_nsent = 0;
+  struct timeval start, end, p_start, p_end;
 
   sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
   setuid(getuid()); /* don't need special permissions any more */
 
   size = 60 * 1024; /* OK if setsockopt fails */
   setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+
+  /* set send buffer size if specified */
+  if (sndbuf_size > 0) {
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_size, sizeof(sndbuf_size)) < 0)
+      err_sys("setsockopt SO_SNDBUF");
+  }
+
+  if (ttl > 0) {
+    setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+  }
+  if (broadcast) {
+    int on = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+  }
+  if (timeout > 0) {
+    struct timeval tv;
+    tv.tv_sec = (int)timeout;
+    tv.tv_usec = (int)((timeout-(int)timeout)*1000000);
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  }
   
   /* enable debug mode if requested */
   if (debug_mode) {
@@ -325,6 +652,32 @@ void readloop(void) {
     }
   }
   
+  /* enable bypass routing if requested */
+  if (bypass_route) {
+    int on = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_DONTROUTE, &on, sizeof(on)) < 0)
+      err_sys("setsockopt SO_DONTROUTE");
+  }
+
+  /* enable record route if requested (IPv4 only) */
+  if (record_route && pr->sasend->sa_family == AF_INET) {
+#ifdef IP_OPTIONS
+    unsigned char rr_opt[40];
+    memset(rr_opt, 0, sizeof(rr_opt));
+    rr_opt[0] = IPOPT_RR; /* record route option */
+    rr_opt[1] = 39;       /* option length */
+    rr_opt[2] = 4;        /* pointer to first slot */
+
+    if (setsockopt(sockfd, IPPROTO_IP, IP_OPTIONS, rr_opt, 39) == 0) {
+      if (!quiet) printf("Record route option set\n");
+    } else {
+      if (!quiet) printf("Warning: Record route option not supported by system/network\n");
+    }
+#else
+    if (!quiet) printf("Warning: IP options not supported on this system\n");
+#endif
+  }
+
   /* set timestamp option if specified (IPv4 only) */
   if (timestamp_opt && pr->sasend->sa_family == AF_INET) {
 #ifdef IP_OPTIONS
@@ -358,27 +711,124 @@ void readloop(void) {
 #endif
   }
 
+  /* preload packets if specified */
+  if (preload_count > 0) {
+    for (int i = 0; i < preload_count; i++) {
+      (*pr->fsend)();
+    }
+  }
+
+  gettimeofday(&start, NULL);
+
+  nsent = 0;
+  nreceived = 0;
+  preceived = 0;
+  nrecv = 0;
+
   sig_alrm(SIGALRM); /* send first packet */
 
-  for (;;) {
-    len = pr->salen;
-    n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
-    if (n < 0) {
-      if (errno == EINTR)
-        continue;
-      else
-        err_sys("recvfrom error");
-    }
+  /* Choose readloop implementation based on ping1 vs ping2 approach */
+  if (count > 0 || timeout > 0) {
+    /* ping1 style loop with timeout and count handling */
+    for ( ; ; ) {
+      /* count packets sent */
+      if (count > 0 && nreceived >= count)
+        break;
+        
+      /* wait for sending packet */
+      while(!nrecv && p_nsent==nsent){p_nsent = p_nsent;}
+      if(nrecv)nrecv = 0;
+      p_nsent++;
 
-    gettimeofday(&tval, NULL);
-    (*pr->fproc)(recvbuf, n, &tval);
+      len = pr->salen;
+      tio_sign = 0;
+      p_inval = 0;
+      gettimeofday(&p_start, NULL);
+      /* wait for packet */
+      while(1){
+        gettimeofday(&p_end, NULL);
+        tv_sub(&p_end, &p_start);
+        p_inval = p_end.tv_sec * 1000.0 + p_end.tv_usec/1000.0;
+        if(p_inval > timeout * 1000.0){
+          preceived++;
+          tio_sign = 1;
+          if(!quiet)printf("Exceed timeLimit\n");
+          break;
+        }
+
+        n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
+        if (n < 0)
+          continue;
+        else break;
+      }
+      
+      gettimeofday(&tval, NULL);
+      nreceived++;
+      if(!quiet && !tio_sign)		
+        (*pr->fproc)(recvbuf, n, &tval);
+      /* drop other packet that do not belong target addr */
+      if(nrecv){
+        nreceived--;
+        p_nsent--;
+      }
+    }
+    gettimeofday(&end, NULL);
+
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1000000.0;
+    printf("--- %s ping statistics ---\n", host);
+    printf("%d packets transmitted, %d received, %.1f%% packet loss, time %.3f s\n",
+      nsent, nreceived-preceived, nsent ? 100.0 * preceived/nsent : 0.0, elapsed);
+  } else {
+    /* ping2 style simple loop */
+    for (;;) {
+      len = pr->salen;
+      n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
+      if (n < 0) {
+        if (errno == EINTR)
+          continue;
+        else
+          err_sys("recvfrom error");
+      }
+
+      gettimeofday(&tval, NULL);
+      (*pr->fproc)(recvbuf, n, &tval);
+    }
   }
 }
 
 void sig_alrm(int signo) {
+  static time_t start_time = 0;
+
+  /* initialize start time */
+  if (start_time == 0) {
+    start_time = time(NULL);
+  }
+
+  /* handle deadline timeout */
+  if (deadline > 0 && (time(NULL) - start_time) >= deadline) {
+    printf("\n--- %s ping statistics ---\n", host);
+    printf("%d packets transmitted, statistics not available\n", nsent);
+    exit(0);
+  }
+
+  /* handle count limit */
+  if (count > 0 && nsent >= count)
+    return;
+
   (*pr->fsend)();
 
-  alarm(1);
+  /* set alarm interval based on flood mode */
+  if (flood_mode) {
+    /* flood mode: send as fast as possible without recursion */
+    struct itimerval timer;
+    timer.it_value.tv_sec = 0;
+    timer.it_value.tv_usec = 10000; /* 10ms interval for flood mode */
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_usec = 10000;
+    setitimer(ITIMER_REAL, &timer, NULL);
+  } else {
+    alarm((unsigned int)interval);
+  }
   return; /* probably interrupts recvfrom() */
 }
 
@@ -524,3 +974,58 @@ void err_sys(const char *fmt, ...) {
  * int optopt：当发现无效选项字符之时，getopt()函数或返回 \’ ? \’ 字符，
  *             或返回字符 \’ : \’ ，并且optopt包含了所发现的无效选项字符。
  */
+
+
+void usage(void) {
+  printf("Usage: ping [options] <hostname>\n");
+  printf("Options:\n");
+  printf("  -b           Allow pinging a broadcast address\n");
+  printf("  -c count     Stop after sending count packets\n");
+  printf("  -h           Show this help message\n");
+  printf("  -i interval  Wait interval seconds between sending each packet (default 1)\n");
+  printf("  -q           Quiet output (summary only)\n");
+  printf("  -s size      Number of data bytes to be sent\n");
+  printf("  -t ttl       Set IP Time To Live\n");
+  printf("  -v           Verbose output\n");
+  printf("  -W timeout   Time to wait for a response, in seconds (default 1)\n");
+  printf("  -4           Force IPv4\n");
+  printf("  -6           Force IPv6\n");
+  printf("  -d           Enable SO_DEBUG\n");
+  printf("  -m mark      Set packet mark value\n");
+  printf("  -M pmtudisc  Path MTU Discovery mode (do/dont/want/probe)\n");
+  printf("  -I interface Network interface or IP address\n");
+  printf("  -T tstamp    Timestamp option (tsonly/tsandaddr/tsprespec)\n");
+  printf("  -f           Flood ping mode\n");
+  printf("  -n           Numeric output mode\n");
+  printf("  -p pattern   Fill pattern in hex\n");
+  printf("  -r           Bypass routing table\n");
+  printf("  -R           Record route\n");
+  printf("  -l preload   Preload count\n");
+  printf("  -w deadline  Deadline in seconds\n");
+  printf("  -V           Print version and exit\n");
+  printf("  -3           RTT precision (do not round up the result time)\n");
+  printf("  -D           Print timestamps\n");
+  printf("  -S size      Use size as SO_SNDBUF socket option value\n");
+}
+
+void print_version(void) {
+  printf("ping version %s\n", PING_VERSION);
+  printf("Compiled with IPv6 support\n");
+  printf("Copyright (C) 2024. This is free software.\n");
+}
+
+void print_timestamp(void) {
+  struct timeval tv;
+  struct tm *tm_info;
+  char timestamp[32];
+  
+  gettimeofday(&tv, NULL);
+  tm_info = localtime(&tv.tv_sec);
+  strftime(timestamp, sizeof(timestamp), "[%H:%M:%S", tm_info);
+  printf("%s.%06ld] ", timestamp, tv.tv_usec);
+}
+
+/* Returns 1 if addr is the limited broadcast address, 0 otherwise */
+int is_broadcast_ip(const struct sockaddr_in *addr) {
+    return ((addr->sin_addr.s_addr & 0xff000000) == 0xff000000);
+}
