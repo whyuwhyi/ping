@@ -26,9 +26,9 @@ int main(int argc, char **argv) {
   print_timestamps = 0;
   sndbuf_size = 0;
 
-  while ((c = getopt(argc, argv, "bc:hi:qs:t:vW:46dm:M:I:T:fnp:rRl:w:V3DS:")) != -1) {
+  while ((c = getopt(argc, argv, "bc:hi:qs:t:vW:46dm:M:I:T:fnp:rRl:w:V3DS:")) !=
+         -1) {
     switch (c) {
-    /* ping1 options */
     case 'b':
       broadcast = 1;
       break;
@@ -40,28 +40,30 @@ int main(int argc, char **argv) {
       exit(0);
     case 'i':
       interval = atof(optarg);
-      if (interval <= 0) err_quit("interval must be > 0");
+      if (interval <= 0)
+        err_quit("interval must be > 0");
       break;
     case 'q':
       quiet = 1;
       break;
     case 's':
       datalen = atoi(optarg);
-      if (datalen < 0) err_quit("invalid packet size");
+      if (datalen < 0)
+        err_quit("invalid packet size");
       break;
     case 't':
       ttl = atoi(optarg);
-      if (ttl < 1 || ttl > 255) err_quit("ttl must be 1-255");
+      if (ttl < 1 || ttl > 255)
+        err_quit("ttl must be 1-255");
       break;
     case 'v':
       verbose++;
       break;
     case 'W':
       timeout = atof(optarg);
-      if (timeout <= 0) err_quit("timeout must be >= 0");
+      if (timeout <= 0)
+        err_quit("timeout must be >= 0");
       break;
-      
-    /* ping2 extensions */
     case '4':
       force_ipv4 = 1;
       break;
@@ -104,8 +106,6 @@ int main(int argc, char **argv) {
     case 'w':
       deadline = atoi(optarg);
       break;
-
-    /* new options */
     case 'V':
       print_version();
       exit(0);
@@ -117,7 +117,8 @@ int main(int argc, char **argv) {
       break;
     case 'S':
       sndbuf_size = atoi(optarg);
-      if (sndbuf_size <= 0) err_quit("send buffer size must be > 0");
+      if (sndbuf_size <= 0)
+        err_quit("send buffer size must be > 0");
       break;
 
     case '?':
@@ -126,28 +127,28 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (optind != argc-1)
+  if (optind != argc - 1)
     err_quit("usage: ping [ options ] <hostname>");
   host = argv[optind];
 
   /* validate conflicting options */
   if (force_ipv4 && force_ipv6)
     err_quit("cannot specify both -4 and -6");
-    
+
   /* validate PMTUdisc option */
-  if (pmtu_discovery && 
-      strcmp(pmtu_discovery, "do") != 0 &&
+  if (pmtu_discovery && strcmp(pmtu_discovery, "do") != 0 &&
       strcmp(pmtu_discovery, "dont") != 0 &&
       strcmp(pmtu_discovery, "want") != 0 &&
       strcmp(pmtu_discovery, "probe") != 0)
-    err_quit("invalid PMTUdisc option: %s (use do/dont/want/probe)", pmtu_discovery);
-    
+    err_quit("invalid PMTUdisc option: %s (use do/dont/want/probe)",
+             pmtu_discovery);
+
   /* validate timestamp option */
-  if (timestamp_opt &&
-      strcmp(timestamp_opt, "tsonly") != 0 &&
+  if (timestamp_opt && strcmp(timestamp_opt, "tsonly") != 0 &&
       strcmp(timestamp_opt, "tsandaddr") != 0 &&
       strcmp(timestamp_opt, "tsprespec") != 0)
-    err_quit("invalid timestamp option: %s (use tsonly/tsandaddr/tsprespec)", timestamp_opt);
+    err_quit("invalid timestamp option: %s (use tsonly/tsandaddr/tsprespec)",
+             timestamp_opt);
 
   /* additional ping2 validations */
   if (flood_mode && getuid() != 0)
@@ -183,7 +184,7 @@ int main(int argc, char **argv) {
     family = AF_INET;
   else if (force_ipv6)
     family = AF_INET6;
-    
+
   /* set deadline alarm if specified */
   if (deadline > 0) {
     signal(SIGALRM, sig_alrm);
@@ -191,6 +192,8 @@ int main(int argc, char **argv) {
   }
 
   ai = host_serv(host, NULL, family, 0);
+  if (ai == NULL)
+    err_quit("host_serv error for %s", host);
 
   printf("ping %s (%s): %d data bytes\n", ai->ai_canonname,
          Sock_ntop_host(ai->ai_addr, ai->ai_addrlen), datalen);
@@ -199,7 +202,8 @@ int main(int argc, char **argv) {
   if (ai->ai_family == AF_INET) {
     struct sockaddr_in *sin = (struct sockaddr_in *)ai->ai_addr;
     if (is_broadcast_ip(sin) && !broadcast) {
-      err_quit("ping: Do you want to ping broadcast? Then -b. If not, check your local firewall rules");
+      err_quit("ping: Do you want to ping broadcast? Then -b. If not, check "
+               "your local firewall rules");
     }
     pr = &proto_v4;
 #ifdef IPV6
@@ -237,9 +241,9 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     err_quit("icmplen (%d) < 8", icmplen);
 
   if (icmp->icmp_type == ICMP_ECHOREPLY) {
-    if (icmp->icmp_id != pid) {
-      nrecv = 1;  /* signing drop packet */
-      return; /* not a response to our ECHO_REQUEST */
+    if (icmp->icmp_id != (pid & 0xFFFF)) {
+      nrecv = 1; /* signing drop packet */
+      return;    /* not a response to our ECHO_REQUEST */
     }
     if (icmplen < 16)
       err_quit("icmplen (%d) < 16", icmplen);
@@ -249,9 +253,10 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
     /* timeout detection */
-    if (rtt > timeout*1000.0) {
+    if (rtt > timeout * 1000.0) {
       preceived++;
-      if (!quiet) printf("Exceed timeLimit\n");
+      if (!quiet)
+        printf("Exceed timeLimit\n");
     } else {
       /* print timestamp if requested */
       if (print_timestamps && !quiet) {
@@ -279,11 +284,13 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
         if (hent != NULL) {
           if (!quiet) {
             if (rtt_precision) {
-              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
-                     hent->h_name, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.6f ms\n",
+                     icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                     ip->ip_ttl, rtt);
             } else {
-              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
-                     hent->h_name, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.3f ms\n",
+                     icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                     ip->ip_ttl, rtt);
             }
           }
         } else {
@@ -326,14 +333,17 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
             }
             break;
           }
-          if (*cp == IPOPT_EOL) break;
+          if (*cp == IPOPT_EOL)
+            break;
           if (*cp == IPOPT_NOP) {
             cp++;
             continue;
           }
-          if (cp + 1 >= end) break;
+          if (cp + 1 >= end)
+            break;
           int next_len = *(cp + 1);
-          if (next_len < 2) break;
+          if (next_len < 2)
+            break;
           cp += next_len;
         }
       }
@@ -350,7 +360,7 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
              icmp->icmp_code);
     }
   } else {
-    nrecv = 1;  /* signing drop packet */
+    nrecv = 1; /* signing drop packet */
   }
 }
 
@@ -379,9 +389,9 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     err_quit("icmp6len (%d) < 8", icmp6len);
 
   if (icmp6->icmp6_type == ICMP6_ECHO_REPLY) {
-    if (icmp6->icmp6_id != pid) {
-      nrecv = 1;  /* signing drop packet */
-      return; /* not a response to our ECHO_REQUEST */
+    if (icmp6->icmp6_id != (pid & 0xFFFF)) {
+      nrecv = 1; /* signing drop packet */
+      return;    /* not a response to our ECHO_REQUEST */
     }
     if (icmp6len < 16)
       err_quit("icmp6len (%d) < 16", icmp6len);
@@ -391,9 +401,10 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
     /* timeout detection */
-    if (rtt > timeout*1000.0) {
+    if (rtt > timeout * 1000.0) {
       preceived++;
-      if (!quiet) printf("Exceed TimeLimit\n");
+      if (!quiet)
+        printf("Exceed TimeLimit\n");
     } else {
       /* print timestamp if requested */
       if (print_timestamps && !quiet) {
@@ -406,11 +417,11 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
                   addr_str, INET6_ADDRSTRLEN);
         if (!quiet) {
           if (rtt_precision) {
-            printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len, addr_str,
-                   icmp6->icmp6_seq, rtt);
+            printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
+                   addr_str, icmp6->icmp6_seq, rtt);
           } else {
-            printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len, addr_str,
-                   icmp6->icmp6_seq, rtt);
+            printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
+                   addr_str, icmp6->icmp6_seq, rtt);
           }
         }
       } else {
@@ -433,10 +444,12 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
           if (!quiet) {
             if (rtt_precision) {
               printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
-                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq, rtt);
+                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                     rtt);
             } else {
               printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
-                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq, rtt);
+                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                     rtt);
             }
           }
         }
@@ -455,7 +468,7 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
              icmp6->icmp6_code);
     }
   } else {
-    nrecv = 1;  /* signing drop packet */
+    nrecv = 1; /* signing drop packet */
   }
 #endif /* IPV6 */
 }
@@ -496,7 +509,7 @@ void send_v4(void) {
   icmp = (struct icmp *)sendbuf;
   icmp->icmp_type = ICMP_ECHO;
   icmp->icmp_code = 0;
-  icmp->icmp_id = pid;
+  icmp->icmp_id = pid & 0xFFFF;
   icmp->icmp_seq = nsent++;
   gettimeofday((struct timeval *)icmp->icmp_data, NULL);
 
@@ -532,7 +545,7 @@ void send_v6() {
   icmp6 = (struct icmp6_hdr *)sendbuf;
   icmp6->icmp6_type = ICMP6_ECHO_REQUEST;
   icmp6->icmp6_code = 0;
-  icmp6->icmp6_id = pid;
+  icmp6->icmp6_id = pid & 0xFFFF;
   icmp6->icmp6_seq = nsent++;
   gettimeofday((struct timeval *)(icmp6 + 1), NULL);
 
@@ -580,7 +593,8 @@ void readloop(void) {
 
   /* set send buffer size if specified */
   if (sndbuf_size > 0) {
-    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_size, sizeof(sndbuf_size)) < 0)
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sndbuf_size,
+                   sizeof(sndbuf_size)) < 0)
       err_sys("setsockopt SO_SNDBUF");
   }
 
@@ -594,27 +608,28 @@ void readloop(void) {
   if (timeout > 0) {
     struct timeval tv;
     tv.tv_sec = (int)timeout;
-    tv.tv_usec = (int)((timeout-(int)timeout)*1000000);
+    tv.tv_usec = (int)((timeout - (int)timeout) * 1000000);
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   }
-  
+
   /* enable debug mode if requested */
   if (debug_mode) {
     int on = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_DEBUG, &on, sizeof(on)) < 0)
       err_sys("setsockopt SO_DEBUG");
   }
-  
+
   /* set packet mark if specified */
   if (mark_value) {
 #ifdef SO_MARK
-    if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &mark_value, sizeof(mark_value)) < 0)
+    if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &mark_value,
+                   sizeof(mark_value)) < 0)
       err_sys("setsockopt SO_MARK");
 #else
     err_quit("SO_MARK not supported on this system");
 #endif
   }
-  
+
   /* set Path MTU Discovery mode if specified */
   if (pmtu_discovery && pr->sasend->sa_family == AF_INET) {
 #ifdef IP_MTU_DISCOVER
@@ -627,18 +642,20 @@ void readloop(void) {
       pmtu_val = IP_PMTUDISC_WANT;
     else if (strcmp(pmtu_discovery, "probe") == 0)
       pmtu_val = IP_PMTUDISC_PROBE;
-    
-    if (setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu_val, sizeof(pmtu_val)) < 0)
+
+    if (setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu_val,
+                   sizeof(pmtu_val)) < 0)
       err_sys("setsockopt IP_MTU_DISCOVER");
 #else
     err_quit("IP_MTU_DISCOVER not supported on this system");
 #endif
   }
-  
+
   /* bind to specific interface if specified */
   if (interface) {
     /* try to bind by interface name */
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, interface, strlen(interface) + 1) < 0) {
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, interface,
+                   strlen(interface) + 1) < 0) {
       /* if binding by name fails, try to parse as IP address */
       struct sockaddr_in addr;
       if (inet_pton(AF_INET, interface, &addr.sin_addr) == 1) {
@@ -651,7 +668,7 @@ void readloop(void) {
       }
     }
   }
-  
+
   /* enable bypass routing if requested */
   if (bypass_route) {
     int on = 1;
@@ -669,12 +686,16 @@ void readloop(void) {
     rr_opt[2] = 4;        /* pointer to first slot */
 
     if (setsockopt(sockfd, IPPROTO_IP, IP_OPTIONS, rr_opt, 39) == 0) {
-      if (!quiet) printf("Record route option set\n");
+      if (!quiet)
+        printf("Record route option set\n");
     } else {
-      if (!quiet) printf("Warning: Record route option not supported by system/network\n");
+      if (!quiet)
+        printf(
+            "Warning: Record route option not supported by system/network\n");
     }
 #else
-    if (!quiet) printf("Warning: IP options not supported on this system\n");
+    if (!quiet)
+      printf("Warning: IP options not supported on this system\n");
 #endif
   }
 
@@ -683,27 +704,27 @@ void readloop(void) {
 #ifdef IP_OPTIONS
     unsigned char ts_opt[40];
     int ts_len;
-    
+
     memset(ts_opt, 0, sizeof(ts_opt));
     ts_opt[0] = IPOPT_TIMESTAMP; /* timestamp option */
-    
+
     if (strcmp(timestamp_opt, "tsonly") == 0) {
-      ts_opt[1] = 36;  /* option length */
-      ts_opt[2] = 5;   /* pointer */
-      ts_opt[3] = 0;   /* flags: timestamps only */
+      ts_opt[1] = 36; /* option length */
+      ts_opt[2] = 5;  /* pointer */
+      ts_opt[3] = 0;  /* flags: timestamps only */
       ts_len = 36;
     } else if (strcmp(timestamp_opt, "tsandaddr") == 0) {
-      ts_opt[1] = 36;  /* option length */
-      ts_opt[2] = 5;   /* pointer */
-      ts_opt[3] = 1;   /* flags: timestamps and addresses */
+      ts_opt[1] = 36; /* option length */
+      ts_opt[2] = 5;  /* pointer */
+      ts_opt[3] = 1;  /* flags: timestamps and addresses */
       ts_len = 36;
     } else if (strcmp(timestamp_opt, "tsprespec") == 0) {
-      ts_opt[1] = 36;  /* option length */
-      ts_opt[2] = 5;   /* pointer */
-      ts_opt[3] = 3;   /* flags: prespecified addresses */
+      ts_opt[1] = 36; /* option length */
+      ts_opt[2] = 5;  /* pointer */
+      ts_opt[3] = 3;  /* flags: prespecified addresses */
       ts_len = 36;
     }
-    
+
     if (setsockopt(sockfd, IPPROTO_IP, IP_OPTIONS, ts_opt, ts_len) < 0)
       err_sys("setsockopt IP_OPTIONS (timestamp)");
 #else
@@ -730,14 +751,17 @@ void readloop(void) {
   /* Choose readloop implementation based on ping1 vs ping2 approach */
   if (count > 0 || timeout > 0) {
     /* ping1 style loop with timeout and count handling */
-    for ( ; ; ) {
+    for (;;) {
       /* count packets sent */
       if (count > 0 && nreceived >= count)
         break;
-        
+
       /* wait for sending packet */
-      while(!nrecv && p_nsent==nsent){p_nsent = p_nsent;}
-      if(nrecv)nrecv = 0;
+      while (!nrecv && p_nsent == nsent) {
+        p_nsent = p_nsent;
+      }
+      if (nrecv)
+        nrecv = 0;
       p_nsent++;
 
       len = pr->salen;
@@ -745,39 +769,47 @@ void readloop(void) {
       p_inval = 0;
       gettimeofday(&p_start, NULL);
       /* wait for packet */
-      while(1){
+      while (1) {
         gettimeofday(&p_end, NULL);
         tv_sub(&p_end, &p_start);
-        p_inval = p_end.tv_sec * 1000.0 + p_end.tv_usec/1000.0;
-        if(p_inval > timeout * 1000.0){
+        p_inval = p_end.tv_sec * 1000.0 + p_end.tv_usec / 1000.0;
+        /* For packets except the last one, wait until next send time
+           For the last packet, wait full timeout */
+        double max_wait = (nreceived + 1 >= count) ? timeout * 1000.0 : interval * 1000.0;
+        if (p_inval > max_wait) {
           preceived++;
           tio_sign = 1;
-          if(!quiet)printf("Exceed timeLimit\n");
+          if (!quiet)
+            printf("Exceed timeLimit\n");
           break;
         }
 
         n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
         if (n < 0)
           continue;
-        else break;
+        else
+          break;
       }
-      
+
       gettimeofday(&tval, NULL);
       nreceived++;
-      if(!quiet && !tio_sign)		
+      if (!quiet && !tio_sign)
         (*pr->fproc)(recvbuf, n, &tval);
       /* drop other packet that do not belong target addr */
-      if(nrecv){
+      if (nrecv) {
         nreceived--;
         p_nsent--;
       }
     }
     gettimeofday(&end, NULL);
 
-    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1000000.0;
+    double elapsed =
+        (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
     printf("--- %s ping statistics ---\n", host);
-    printf("%d packets transmitted, %d received, %.1f%% packet loss, time %.3f s\n",
-      nsent, nreceived-preceived, nsent ? 100.0 * preceived/nsent : 0.0, elapsed);
+    printf("%d packets transmitted, %d received, %.1f%% packet loss, time %.3f "
+           "s\n",
+           nsent, nreceived - preceived,
+           nsent ? 100.0 * preceived / nsent : 0.0, elapsed);
   } else {
     /* ping2 style simple loop */
     for (;;) {
@@ -899,8 +931,10 @@ struct addrinfo *host_serv(const char *host, const char *serv, int family,
   hints.ai_family = family;      /* AF_UNSPEC, AF_INET, AF_INET6, etc. */
   hints.ai_socktype = socktype;  /* 0, SOCK_STREAM, SOCK_DGRAM, etc. */
 
-  if ((n = getaddrinfo(host, serv, &hints, &res)) != 0)
+  if ((n = getaddrinfo(host, serv, &hints, &res)) != 0) {
+    fprintf(stderr, "getaddrinfo error for %s: %s\n", host, gai_strerror(n));
     return (NULL);
+  }
 
   return (res); /* return pointer to first on linked list */
 }
@@ -956,38 +990,20 @@ void err_sys(const char *fmt, ...) {
   exit(1);
 }
 
-/*
- * getopt是由Unix标准库提供的函数，查看命令man 3 getopt。
- *
- * getopt函数的参数：
- * 参数argc和argv：通常是从main的参数直接传递而来，argc是参数的数量，
- *                 argv是一个常量字符串数组的地址。
- * 参数optstring：一个包含正确选项字符的字符串，如果一个字符后面有冒号，
-                  那么这个选项在传递参数时就需要跟着一个参数。
-
- * 外部变量：
- * char *optarg：如果有参数，则包含当前选项参数字符串
- * int optind：argv的当前索引值。当getopt函数在while循环中使用时，
- *             剩下的字符串为操作数，下标从optind到argc-1。
- * int opterr：这个变量非零时，getopt()函数为“无效选项”和“缺少参数选项，
- *             并输出其错误信息。
- * int optopt：当发现无效选项字符之时，getopt()函数或返回 \’ ? \’ 字符，
- *             或返回字符 \’ : \’ ，并且optopt包含了所发现的无效选项字符。
- */
-
-
 void usage(void) {
   printf("Usage: ping [options] <hostname>\n");
   printf("Options:\n");
   printf("  -b           Allow pinging a broadcast address\n");
   printf("  -c count     Stop after sending count packets\n");
   printf("  -h           Show this help message\n");
-  printf("  -i interval  Wait interval seconds between sending each packet (default 1)\n");
+  printf("  -i interval  Wait interval seconds between sending each packet "
+         "(default 1)\n");
   printf("  -q           Quiet output (summary only)\n");
   printf("  -s size      Number of data bytes to be sent\n");
   printf("  -t ttl       Set IP Time To Live\n");
   printf("  -v           Verbose output\n");
-  printf("  -W timeout   Time to wait for a response, in seconds (default 1)\n");
+  printf(
+      "  -W timeout   Time to wait for a response, in seconds (default 1)\n");
   printf("  -4           Force IPv4\n");
   printf("  -6           Force IPv6\n");
   printf("  -d           Enable SO_DEBUG\n");
@@ -1018,7 +1034,7 @@ void print_timestamp(void) {
   struct timeval tv;
   struct tm *tm_info;
   char timestamp[32];
-  
+
   gettimeofday(&tv, NULL);
   tm_info = localtime(&tv.tv_sec);
   strftime(timestamp, sizeof(timestamp), "[%H:%M:%S", tm_info);
@@ -1027,5 +1043,24 @@ void print_timestamp(void) {
 
 /* Returns 1 if addr is the limited broadcast address, 0 otherwise */
 int is_broadcast_ip(const struct sockaddr_in *addr) {
-    return ((addr->sin_addr.s_addr & 0xff000000) == 0xff000000);
+  return ((addr->sin_addr.s_addr & 0xff000000) == 0xff000000);
 }
+
+/*
+ * getopt是由Unix标准库提供的函数，查看命令man 3 getopt。
+ *
+ * getopt函数的参数：
+ * 参数argc和argv：通常是从main的参数直接传递而来，argc是参数的数量，
+ *                 argv是一个常量字符串数组的地址。
+ * 参数optstring：一个包含正确选项字符的字符串，如果一个字符后面有冒号，
+                  那么这个选项在传递参数时就需要跟着一个参数。
+
+ * 外部变量：
+ * char *optarg：如果有参数，则包含当前选项参数字符串
+ * int optind：argv的当前索引值。当getopt函数在while循环中使用时，
+ *             剩下的字符串为操作数，下标从optind到argc-1。
+ * int opterr：这个变量非零时，getopt()函数为“无效选项”和“缺少参数选项，
+ *             并输出其错误信息。
+ * int optopt：当发现无效选项字符之时，getopt()函数或返回 \’ ? \’ 字符，
+ *             或返回字符 \’ : \’ ，并且optopt包含了所发现的无效选项字符。
+ */
