@@ -25,9 +25,17 @@ int main(int argc, char **argv) {
   rtt_precision = 0;
   print_timestamps = 0;
   sndbuf_size = 0;
+  user_latency = 0;
+  
+  /* Initialize RTT statistics */
+  rtt_min = 999999.0;
+  rtt_max = 0.0;
+  rtt_sum = 0.0;
+  rtt_sum_sq = 0.0;
+  rtt_count = 0;
 
-  while ((c = getopt(argc, argv, "bc:hi:qs:t:vW:46dm:M:I:T:fnp:rRl:w:V3DS:")) !=
-         -1) {
+  while ((c = getopt(argc, argv,
+                     "bc:hi:qs:t:vW:46dm:M:I:T:fnp:rRl:w:V3DS:U")) != -1) {
     switch (c) {
     case 'b':
       broadcast = 1;
@@ -119,6 +127,9 @@ int main(int argc, char **argv) {
       sndbuf_size = atoi(optarg);
       if (sndbuf_size <= 0)
         err_quit("send buffer size must be > 0");
+      break;
+    case 'U':
+      user_latency = 1;
       break;
 
     case '?':
@@ -258,6 +269,12 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
       if (!quiet)
         printf("Exceed timeLimit\n");
     } else {
+      /* Update RTT statistics */
+      rtt_count++;
+      rtt_sum += rtt;
+      rtt_sum_sq += rtt * rtt;
+      if (rtt < rtt_min) rtt_min = rtt;
+      if (rtt > rtt_max) rtt_max = rtt;
       /* print timestamp if requested */
       if (print_timestamps && !quiet) {
         print_timestamp();
@@ -267,12 +284,22 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
       if (numeric_mode) {
         inet_ntop(AF_INET, &ip->ip_src, addr_str, INET_ADDRSTRLEN);
         if (!quiet) {
-          if (rtt_precision) {
-            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
-                   addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+          if (user_latency) {
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, ttl=%d, time=%.6f ms\n",
+                     icmplen, addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, ttl=%d, time=%.3f ms\n",
+                     icmplen, addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+            }
           } else {
-            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
-                   addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
+                     addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
+                     addr_str, icmp->icmp_seq, ip->ip_ttl, rtt);
+            }
           }
         }
       } else {
@@ -283,24 +310,50 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
         hent = gethostbyaddr(&addr, sizeof(addr), AF_INET);
         if (hent != NULL) {
           if (!quiet) {
-            if (rtt_precision) {
-              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.6f ms\n",
-                     icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
-                     ip->ip_ttl, rtt);
+            if (user_latency) {
+              if (rtt_precision) {
+                printf("%d bytes from %s (%s): seq=%u, ttl=%d, time=%.6f ms\n",
+                       icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                       ip->ip_ttl, rtt);
+              } else {
+                printf("%d bytes from %s (%s): seq=%u, ttl=%d, time=%.3f ms\n",
+                       icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                       ip->ip_ttl, rtt);
+              }
             } else {
-              printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.3f ms\n",
-                     icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
-                     ip->ip_ttl, rtt);
+              if (rtt_precision) {
+                printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.6f ms\n",
+                       icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                       ip->ip_ttl, rtt);
+              } else {
+                printf("%d bytes from %s (%s): seq=%u, ttl=%d, rtt=%.3f ms\n",
+                       icmplen, hent->h_name, inet_ntoa(addr), icmp->icmp_seq,
+                       ip->ip_ttl, rtt);
+              }
             }
           }
         } else {
           if (!quiet) {
-            if (rtt_precision) {
-              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n", icmplen,
-                     inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+            if (user_latency) {
+              if (rtt_precision) {
+                printf("%d bytes from %s: seq=%u, ttl=%d, time=%.6f ms\n",
+                       icmplen, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl,
+                       rtt);
+              } else {
+                printf("%d bytes from %s: seq=%u, ttl=%d, time=%.3f ms\n",
+                       icmplen, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl,
+                       rtt);
+              }
             } else {
-              printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n", icmplen,
-                     inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl, rtt);
+              if (rtt_precision) {
+                printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.6f ms\n",
+                       icmplen, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl,
+                       rtt);
+              } else {
+                printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
+                       icmplen, inet_ntoa(addr), icmp->icmp_seq, ip->ip_ttl,
+                       rtt);
+              }
             }
           }
         }
@@ -406,6 +459,12 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
       if (!quiet)
         printf("Exceed TimeLimit\n");
     } else {
+      /* Update RTT statistics */
+      rtt_count++;
+      rtt_sum += rtt;
+      rtt_sum_sq += rtt * rtt;
+      if (rtt < rtt_min) rtt_min = rtt;
+      if (rtt > rtt_max) rtt_max = rtt;
       /* print timestamp if requested */
       if (print_timestamps && !quiet) {
         print_timestamp();
@@ -416,12 +475,22 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
         inet_ntop(AF_INET6, &((struct sockaddr_in6 *)pr->sarecv)->sin6_addr,
                   addr_str, INET6_ADDRSTRLEN);
         if (!quiet) {
-          if (rtt_precision) {
-            printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
-                   addr_str, icmp6->icmp6_seq, rtt);
+          if (user_latency) {
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, time=%.6f ms\n", icmp6len,
+                     addr_str, icmp6->icmp6_seq, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, time=%.3f ms\n", icmp6len,
+                     addr_str, icmp6->icmp6_seq, rtt);
+            }
           } else {
-            printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
-                   addr_str, icmp6->icmp6_seq, rtt);
+            if (rtt_precision) {
+              printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
+                     addr_str, icmp6->icmp6_seq, rtt);
+            } else {
+              printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
+                     addr_str, icmp6->icmp6_seq, rtt);
+            }
           }
         }
       } else {
@@ -432,24 +501,46 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
         if (hent != NULL) {
           inet_ntop(AF_INET6, &sa6->sin6_addr, addr_str, INET6_ADDRSTRLEN);
           if (!quiet) {
-            if (rtt_precision) {
-              printf("%d bytes from %s (%s): seq=%u, rtt=%.6f ms\n", icmp6len,
-                     hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+            if (user_latency) {
+              if (rtt_precision) {
+                printf("%d bytes from %s (%s): seq=%u, time=%.6f ms\n",
+                       icmp6len, hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+              } else {
+                printf("%d bytes from %s (%s): seq=%u, time=%.3f ms\n",
+                       icmp6len, hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+              }
             } else {
-              printf("%d bytes from %s (%s): seq=%u, rtt=%.3f ms\n", icmp6len,
-                     hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+              if (rtt_precision) {
+                printf("%d bytes from %s (%s): seq=%u, rtt=%.6f ms\n", icmp6len,
+                       hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+              } else {
+                printf("%d bytes from %s (%s): seq=%u, rtt=%.3f ms\n", icmp6len,
+                       hent->h_name, addr_str, icmp6->icmp6_seq, rtt);
+              }
             }
           }
         } else {
           if (!quiet) {
-            if (rtt_precision) {
-              printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
-                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
-                     rtt);
+            if (user_latency) {
+              if (rtt_precision) {
+                printf("%d bytes from %s: seq=%u, time=%.6f ms\n", icmp6len,
+                       Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                       rtt);
+              } else {
+                printf("%d bytes from %s: seq=%u, time=%.3f ms\n", icmp6len,
+                       Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                       rtt);
+              }
             } else {
-              printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
-                     Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
-                     rtt);
+              if (rtt_precision) {
+                printf("%d bytes from %s: seq=%u, rtt=%.6f ms\n", icmp6len,
+                       Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                       rtt);
+              } else {
+                printf("%d bytes from %s: seq=%u, rtt=%.3f ms\n", icmp6len,
+                       Sock_ntop_host(pr->sarecv, pr->salen), icmp6->icmp6_seq,
+                       rtt);
+              }
             }
           }
         }
@@ -515,7 +606,7 @@ void send_v4(void) {
 
   /* fill data with pattern if specified */
   if (pattern) {
-    unsigned char *data = (unsigned char *)icmp->icmp_data + 8;
+    unsigned char *data = (unsigned char *)icmp->icmp_data + sizeof(struct timeval);
     int pattern_len = strlen(pattern) / 2;
     unsigned char pattern_bytes[pattern_len];
 
@@ -525,8 +616,9 @@ void send_v4(void) {
     }
 
     /* fill data area with pattern */
-    for (int i = 8; i < datalen; i++) {
-      data[i - 8] = pattern_bytes[(i - 8) % pattern_len];
+    int data_size = datalen - sizeof(struct timeval);
+    for (int i = 0; i < data_size; i++) {
+      data[i] = pattern_bytes[i % pattern_len];
     }
   }
 
@@ -551,7 +643,7 @@ void send_v6() {
 
   /* fill data with pattern if specified */
   if (pattern) {
-    unsigned char *data = (unsigned char *)(icmp6 + 1) + 8;
+    unsigned char *data = (unsigned char *)(icmp6 + 1) + sizeof(struct timeval);
     int pattern_len = strlen(pattern) / 2;
     unsigned char pattern_bytes[pattern_len];
 
@@ -561,8 +653,9 @@ void send_v6() {
     }
 
     /* fill data area with pattern */
-    for (int i = 8; i < datalen; i++) {
-      data[i - 8] = pattern_bytes[(i - 8) % pattern_len];
+    int data_size = datalen - sizeof(struct timeval);
+    for (int i = 0; i < data_size; i++) {
+      data[i] = pattern_bytes[i % pattern_len];
     }
   }
 
@@ -732,19 +825,19 @@ void readloop(void) {
 #endif
   }
 
-  /* preload packets if specified */
-  if (preload_count > 0) {
-    for (int i = 0; i < preload_count; i++) {
-      (*pr->fsend)();
-    }
-  }
-
   gettimeofday(&start, NULL);
 
   nsent = 0;
   nreceived = 0;
   preceived = 0;
   nrecv = 0;
+
+  /* preload packets if specified */
+  if (preload_count > 0) {
+    for (int i = 0; i < preload_count; i++) {
+      (*pr->fsend)();
+    }
+  }
 
   sig_alrm(SIGALRM); /* send first packet */
 
@@ -756,7 +849,7 @@ void readloop(void) {
       if (count > 0 && nreceived >= count)
         break;
 
-      /* wait for sending packet */
+      /* wait for sending packet - skip initial preload packets */
       while (!nrecv && p_nsent == nsent) {
         p_nsent = p_nsent;
       }
@@ -775,7 +868,8 @@ void readloop(void) {
         p_inval = p_end.tv_sec * 1000.0 + p_end.tv_usec / 1000.0;
         /* For packets except the last one, wait until next send time
            For the last packet, wait full timeout */
-        double max_wait = (nreceived + 1 >= count) ? timeout * 1000.0 : interval * 1000.0;
+        double max_wait =
+            (nreceived + 1 >= count) ? timeout * 1000.0 : interval * 1000.0;
         if (p_inval > max_wait) {
           preceived++;
           tio_sign = 1;
@@ -810,6 +904,18 @@ void readloop(void) {
            "s\n",
            nsent, nreceived - preceived,
            nsent ? 100.0 * preceived / nsent : 0.0, elapsed);
+    
+    /* Print RTT statistics if we have valid data */
+    if (rtt_count > 0) {
+      double rtt_avg = rtt_sum / rtt_count;
+      double rtt_mdev = 0.0;
+      if (rtt_count > 1) {
+        double variance = (rtt_sum_sq / rtt_count) - (rtt_avg * rtt_avg);
+        rtt_mdev = sqrt(variance > 0 ? variance : 0);
+      }
+      printf("rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms\n",
+             rtt_min, rtt_avg, rtt_max, rtt_mdev);
+    }
   } else {
     /* ping2 style simple loop */
     for (;;) {
@@ -1021,6 +1127,8 @@ void usage(void) {
   printf("  -V           Print version and exit\n");
   printf("  -3           RTT precision (do not round up the result time)\n");
   printf("  -D           Print timestamps\n");
+  printf("  -U           Print user-to-user latency (use 'time' instead of "
+         "'rtt')\n");
   printf("  -S size      Use size as SO_SNDBUF socket option value\n");
 }
 

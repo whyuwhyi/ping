@@ -1,5 +1,6 @@
 #include <arpa/inet.h> /* inet(3) functions */
 #include <errno.h>
+#include <math.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <getopt.h>
@@ -94,6 +95,14 @@ time_t start_time;    /* start time for deadline calculation */
 int rtt_precision;    /* -3: RTT precision mode */
 int print_timestamps; /* -D: print timestamps */
 int sndbuf_size;      /* -S: SO_SNDBUF socket option value */
+int user_latency;     /* -U: print user-to-user latency */
+
+/* RTT statistics */
+double rtt_min;       /* minimum RTT */
+double rtt_max;       /* maximum RTT */
+double rtt_sum;       /* sum of RTTs for average */
+double rtt_sum_sq;    /* sum of squares for mdev calculation */
+int rtt_count;        /* count of valid RTTs */
 
 /* function prototypes */
 void proc_v4(char *, ssize_t, struct timeval *);

@@ -6,7 +6,7 @@ CFLAGS	=
 #LIBS	= /usr/ucblib/libucb.a -lsocket -lnsl
 
 # Following line for 4.4BSD, BSD/386, SunOS 4.x, AIX 3.2.2
-#LIBS	=
+LIBS	= -lm
 
 PROGS = ping
 OBJS = ping.o
