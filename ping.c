@@ -263,12 +263,8 @@ void proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
-    /* timeout detection */
-    if (rtt > timeout * 1000.0) {
-      preceived++;
-      if (!quiet)
-        printf("Exceed timeLimit\n");
-    } else {
+    /* Update RTT statistics and print response */
+    {
       /* Update RTT statistics */
       rtt_count++;
       rtt_sum += rtt;
@@ -453,12 +449,8 @@ void proc_v6(char *ptr, ssize_t len, struct timeval *tvrecv) {
     tv_sub(tvrecv, tvsend);
     rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
 
-    /* timeout detection */
-    if (rtt > timeout * 1000.0) {
-      preceived++;
-      if (!quiet)
-        printf("Exceed TimeLimit\n");
-    } else {
+    /* Update RTT statistics and print response */
+    {
       /* Update RTT statistics */
       rtt_count++;
       rtt_sum += rtt;
@@ -846,53 +838,49 @@ void readloop(void) {
     /* ping1 style loop with timeout and count handling */
     for (;;) {
       /* count packets sent */
-      if (count > 0 && nreceived >= count)
+      if (count > 0 && nsent >= count)
         break;
 
-      /* wait for sending packet - skip initial preload packets */
-      while (!nrecv && p_nsent == nsent) {
-        p_nsent = p_nsent;
-      }
-      if (nrecv)
-        nrecv = 0;
-      p_nsent++;
-
+      /* wait for packet with timeout */
       len = pr->salen;
-      tio_sign = 0;
-      p_inval = 0;
-      gettimeofday(&p_start, NULL);
-      /* wait for packet */
-      while (1) {
-        gettimeofday(&p_end, NULL);
-        tv_sub(&p_end, &p_start);
-        p_inval = p_end.tv_sec * 1000.0 + p_end.tv_usec / 1000.0;
-        /* For packets except the last one, wait until next send time
-           For the last packet, wait full timeout */
-        double max_wait =
-            (nreceived + 1 >= count) ? timeout * 1000.0 : interval * 1000.0;
-        if (p_inval > max_wait) {
-          preceived++;
-          tio_sign = 1;
-          if (!quiet)
-            printf("Exceed timeLimit\n");
-          break;
-        }
-
-        n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
-        if (n < 0)
+      struct timeval recv_timeout;
+      recv_timeout.tv_sec = (int)timeout;
+      recv_timeout.tv_usec = (int)((timeout - (int)timeout) * 1000000);
+      
+      fd_set readfds;
+      FD_ZERO(&readfds);
+      FD_SET(sockfd, &readfds);
+      
+      int ready = select(sockfd + 1, &readfds, NULL, NULL, &recv_timeout);
+      if (ready < 0) {
+        if (errno == EINTR)
           continue;
         else
-          break;
+          err_sys("select error");
+      } else if (ready == 0) {
+        /* timeout occurred */
+        if (!quiet)
+          printf("Exceed timeLimit\n");
+        preceived++;
+        continue;
+      }
+
+      n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
+      if (n < 0) {
+        if (errno == EINTR)
+          continue;
+        else
+          err_sys("recvfrom error");
       }
 
       gettimeofday(&tval, NULL);
       nreceived++;
-      if (!quiet && !tio_sign)
-        (*pr->fproc)(recvbuf, n, &tval);
+      (*pr->fproc)(recvbuf, n, &tval);
+      
       /* drop other packet that do not belong target addr */
       if (nrecv) {
         nreceived--;
-        p_nsent--;
+        nrecv = 0;
       }
     }
     gettimeofday(&end, NULL);
@@ -1149,9 +1137,23 @@ void print_timestamp(void) {
   printf("%s.%06ld] ", timestamp, tv.tv_usec);
 }
 
-/* Returns 1 if addr is the limited broadcast address, 0 otherwise */
+/* Returns 1 if addr is a broadcast address, 0 otherwise */
 int is_broadcast_ip(const struct sockaddr_in *addr) {
-  return ((addr->sin_addr.s_addr & 0xff000000) == 0xff000000);
+  /* Check for limited broadcast address 255.255.255.255 */
+  if (addr->sin_addr.s_addr == INADDR_BROADCAST) {
+    return 1;
+  }
+  
+  /* Check for subnet broadcast address by examining the last octet */
+  uint32_t ip_addr = ntohl(addr->sin_addr.s_addr);
+  uint8_t last_octet = ip_addr & 0xFF;
+  
+  /* Common subnet broadcast patterns (ending in 255) */
+  if (last_octet == 255) {
+    return 1;
+  }
+  
+  return 0;
 }
 
 /*
